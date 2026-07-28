@@ -5,7 +5,10 @@ import styled from '@emotion/styled';
  * Principle II, FR-014) by default; student-facing screens should use
  * `<Button kid />` for the larger 88px target.
  */
-export const Button = styled.button<{ kid?: boolean; variant?: 'primary' | 'secondary' }>`
+export const Button = styled.button<{
+  kid?: boolean;
+  variant?: 'primary' | 'secondary' | 'danger';
+}>`
   min-height: ${({ theme, kid }) => (kid ? theme.tapTarget.childMin : theme.tapTarget.min)};
   min-width: ${({ theme, kid }) => (kid ? theme.tapTarget.childMin : theme.tapTarget.min)};
   padding: ${({ theme }) => `${theme.space.sm} ${theme.space.lg}`};
@@ -16,7 +19,11 @@ export const Button = styled.button<{ kid?: boolean; variant?: 'primary' | 'seco
   font-size: ${({ theme, kid }) => (kid ? theme.font.size.childBody : theme.font.size.body)};
   font-weight: 700;
   background: ${({ theme, variant }) =>
-    variant === 'secondary' ? theme.color.surface : theme.color.primary};
+    variant === 'secondary'
+      ? theme.color.surface
+      : variant === 'danger'
+        ? theme.color.error
+        : theme.color.primary};
   color: ${({ theme, variant }) => (variant === 'secondary' ? theme.color.primary : '#fff')};
   border: ${({ theme, variant }) =>
     variant === 'secondary' ? `2px solid ${theme.color.primary}` : 'none'};
