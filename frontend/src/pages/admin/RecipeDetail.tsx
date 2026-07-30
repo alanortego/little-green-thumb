@@ -14,7 +14,7 @@ interface RecipeStep {
 interface Recipe {
   id: number;
   name: string;
-  is_published: 0 | 1;
+  is_published: boolean;
   plantIds: number[];
   steps: RecipeStep[];
 }

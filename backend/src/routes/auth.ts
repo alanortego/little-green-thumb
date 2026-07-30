@@ -1,25 +1,24 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import type { StudentRow, UserRow } from '../models/types.js';
 
-export function createAuthRouter(db: Database.Database): Router {
+export function createAuthRouter(db: Pool): Router {
   const router = Router();
 
-  // Teacher/Admin credential login (FR-022).
-  router.post('/login', (req, res) => {
+  router.post('/login', async (req, res) => {
     const { email, password } = req.body as { email?: string; password?: string };
     if (!email || !password) {
       res.status(400).json({ error: 'email_and_password_required' });
       return;
     }
 
-    const user = db
-      .prepare<[string], UserRow>(
-        'SELECT * FROM users WHERE email = ? AND role IN (\'teacher\', \'admin\')',
+    const user = (
+      await db.query<UserRow>(
+        'SELECT * FROM users WHERE email = $1 AND role IN (\'teacher\', \'admin\')',
+        [email],
       )
-      .get(email);
-
+    ).rows[0];
     if (!user || !user.password_hash || !bcrypt.compareSync(password, user.password_hash)) {
       res.status(401).json({ error: 'invalid_credentials' });
       return;
@@ -29,55 +28,52 @@ export function createAuthRouter(db: Database.Database): Router {
     req.session.userId = user.id;
     const ownClass =
       user.role === 'teacher'
-        ? db.prepare('SELECT id FROM classes WHERE teacher_id = ?').get(user.id)
+        ? (await db.query<{ id: number }>('SELECT id FROM classes WHERE teacher_id = $1', [user.id]))
+          .rows[0]
         : undefined;
     res.json({
       id: user.id,
       name: user.name,
       role: user.role,
-      classId: (ownClass as { id: number } | undefined)?.id ?? null,
+      classId: ownClass?.id ?? null,
     });
   });
 
-  // GET /auth/me — lets the teacher/admin SPA re-derive "who's logged in" (incl. classId)
-  // after a page refresh, without re-storing credentials client-side.
-  router.get('/me', (req, res) => {
+  router.get('/me', async (req, res) => {
     if (!req.session.role || req.session.role === 'child') {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
-    const user = db
-      .prepare<[number], UserRow>('SELECT * FROM users WHERE id = ?')
-      .get(req.session.userId as number);
+    const user = (
+      await db.query<UserRow>('SELECT * FROM users WHERE id = $1', [req.session.userId])
+    ).rows[0];
     if (!user) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
     const ownClass =
       user.role === 'teacher'
-        ? db.prepare('SELECT id FROM classes WHERE teacher_id = ?').get(user.id)
+        ? (await db.query<{ id: number }>('SELECT id FROM classes WHERE teacher_id = $1', [user.id]))
+          .rows[0]
         : undefined;
     res.json({
       id: user.id,
       name: user.name,
       role: user.role,
-      classId: (ownClass as { id: number } | undefined)?.id ?? null,
+      classId: ownClass?.id ?? null,
     });
   });
 
-  // POST /auth/parent-code — quick parent login/link (FR-011). Each code links exactly one
-  // child; if the parent is already signed in, this links an *additional* child to the same
-  // session instead of starting over (FR-011a).
-  router.post('/parent-code', (req, res) => {
+  router.post('/parent-code', async (req, res) => {
     const { code } = req.body as { code?: string };
     if (!code) {
       res.status(400).json({ error: 'code_required' });
       return;
     }
 
-    const student = db
-      .prepare<[string], StudentRow>('SELECT * FROM students WHERE parent_quick_code = ?')
-      .get(code);
+    const student = (
+      await db.query<StudentRow>('SELECT * FROM students WHERE parent_quick_code = $1', [code])
+    ).rows[0];
     if (!student) {
       res.status(404).json({ error: 'invalid_code' });
       return;
@@ -85,62 +81,58 @@ export function createAuthRouter(db: Database.Database): Router {
 
     let parentUserId: number;
     if (req.session.role === 'parent' && req.session.userId) {
-      // Already signed in as a parent — link this child to the same account.
       parentUserId = req.session.userId;
     } else {
-      // First code entered this session — create a lightweight parent account.
-      const info = db
-        .prepare('INSERT INTO users (role, name) VALUES (\'parent\', \'Parent\')')
-        .run();
-      parentUserId = info.lastInsertRowid as number;
+      parentUserId = (
+        await db.query<{ id: number }>(
+          'INSERT INTO users (role, name) VALUES (\'parent\', \'Parent\') RETURNING id',
+        )
+      ).rows[0].id;
     }
 
     if (student.parent_id !== parentUserId) {
-      db.prepare('UPDATE students SET parent_id = ? WHERE id = ?').run(parentUserId, student.id);
+      await db.query('UPDATE students SET parent_id = $1 WHERE id = $2', [parentUserId, student.id]);
     }
 
     const linkedStudentIds = (
-      db
-        .prepare<[number], { id: number }>('SELECT id FROM students WHERE parent_id = ?')
-        .all(parentUserId)
-    ).map((s) => s.id);
+      await db.query<{ id: number }>('SELECT id FROM students WHERE parent_id = $1', [parentUserId])
+    ).rows.map((linkedStudent) => linkedStudent.id);
 
     req.session.role = 'parent';
     req.session.userId = parentUserId;
     req.session.linkedStudentIds = linkedStudentIds;
-    req.session.studentId = student.id; // Newly-linked child becomes the active one
+    req.session.studentId = student.id;
 
     res.json({ linkedStudentIds, activeStudentId: student.id });
   });
 
-  // Child login: tap-an-avatar picker, no password (FR-013). The student list itself is
-  // served publicly (names/avatars only, no PII) so the picker works with zero prior auth.
-  router.get('/students-picker', (req, res) => {
+  router.get('/students-picker', async (req, res) => {
     const classId = req.query.classId as string | undefined;
     const students = classId
-      ? db
-        .prepare<[string], Pick<StudentRow, 'id' | 'display_name' | 'avatar_key'>>(
-          'SELECT id, display_name, avatar_key FROM students WHERE class_id = ? ORDER BY display_name',
+      ? (
+        await db.query<Pick<StudentRow, 'id' | 'display_name' | 'avatar_key'>>(
+          'SELECT id, display_name, avatar_key FROM students WHERE class_id = $1 ORDER BY display_name',
+          [classId],
         )
-        .all(classId)
-      : db
-        .prepare<[], Pick<StudentRow, 'id' | 'display_name' | 'avatar_key'>>(
+      ).rows
+      : (
+        await db.query<Pick<StudentRow, 'id' | 'display_name' | 'avatar_key'>>(
           'SELECT id, display_name, avatar_key FROM students ORDER BY display_name',
         )
-        .all();
+      ).rows;
     res.json(students);
   });
 
-  router.post('/select-student', (req, res) => {
+  router.post('/select-student', async (req, res) => {
     const { studentId } = req.body as { studentId?: string };
     if (!studentId) {
       res.status(400).json({ error: 'student_id_required' });
       return;
     }
 
-    const student = db
-      .prepare<[string], StudentRow>('SELECT * FROM students WHERE id = ?')
-      .get(studentId);
+    const student = (
+      await db.query<StudentRow>('SELECT * FROM students WHERE id = $1', [studentId])
+    ).rows[0];
     if (!student) {
       res.status(404).json({ error: 'student_not_found' });
       return;

@@ -1,7 +1,7 @@
+import connectPgSimple from 'connect-pg-simple';
 import session from 'express-session';
-import sqliteStoreFactory from 'better-sqlite3-session-store';
 import type { RequestHandler } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 
 export type SessionRole = 'child' | 'teacher' | 'parent' | 'admin';
 
@@ -19,25 +19,22 @@ declare module 'express-session' {
   }
 }
 
-const SqliteStore = sqliteStoreFactory(session);
+const PgStore = connectPgSimple(session);
 
-/**
- * Builds the shared session middleware backed by the same SQLite file as
- * app data (simplest option for a single-process, single-school deployment).
- * ponytail: one session store for all roles; split stores only if the
- * session table ever needs independent scaling/retention from app data.
- */
-export function createSessionMiddleware(db: Database.Database): RequestHandler {
+/** Builds the shared PostgreSQL-backed session middleware. */
+export function createSessionMiddleware(db: Pool): RequestHandler {
   return session({
-    store: new SqliteStore({ client: db, expired: { clear: true, intervalMs: 15 * 60 * 1000 } }),
+    store: new PgStore({
+      pool: db,
+      createTableIfMissing: false,
+      pruneSessionInterval: 15 * 60,
+    }),
     secret: process.env.SESSION_SECRET ?? 'dev-only-secret-change-in-production',
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
-      // Teacher/parent/admin sessions use standard cookie expiry (24h);
-      // student idle-timeout is enforced separately by idleTimeout.ts (FR-013a).
       maxAge: 24 * 60 * 60 * 1000,
     },
   });

@@ -1,25 +1,29 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
-import { makeTestDb } from '../helpers/testDb.js';
+import { closeTestDb, makeTestDb, resetSequences } from '../helpers/testDb.js';
 
 describe('US1: QR scan → plant detail', () => {
-  const db = makeTestDb();
-  const app = createApp(db);
-  const agent = request.agent(app);
+  let db: Awaited<ReturnType<typeof makeTestDb>>;
+  let app: ReturnType<typeof createApp>;
+  let agent: ReturnType<typeof request.agent>;
 
-  afterAll(() => db.close());
+  afterAll(() => closeTestDb(db));
 
-  beforeAll(() => {
-    db.exec(`
+  beforeAll(async () => {
+    db = await makeTestDb();
+    app = createApp(db);
+    agent = request.agent(app);
+    await db.query(`
       INSERT INTO users (id, role, name, email, password_hash) VALUES (1, 'teacher', 'Ms. Rivera', 't@example.com', 'x');
       INSERT INTO classes (id, name, teacher_id) VALUES (1, 'Room 4', 1);
       INSERT INTO students (id, display_name, avatar_key, class_id) VALUES (1, 'Ava', 'fox', 1);
       INSERT INTO plants (id, name, qr_code, benefit_text, is_published)
-        VALUES (1, 'Carrot', 'QR-CARROT-01', 'Carrots help you see in the dark!', 1);
+        VALUES (1, 'Carrot', 'QR-CARROT-01', 'Carrots help you see in the dark!', TRUE);
       INSERT INTO plants (id, name, qr_code, benefit_text, is_published)
-        VALUES (2, 'Draft Kale', 'QR-KALE-01', 'Not ready yet', 0);
+        VALUES (2, 'Draft Kale', 'QR-KALE-01', 'Not ready yet', FALSE);
     `);
+    await resetSequences(db);
   });
 
   it('lists only published plants without auth rejection once logged in', async () => {
@@ -39,14 +43,12 @@ describe('US1: QR scan → plant detail', () => {
     expect(res.body.name).toBe('Carrot');
     expect(res.body.benefit_text).toContain('dark');
 
-    const discovery = db
-      .prepare('SELECT * FROM plant_discoveries WHERE student_id = 1 AND plant_id = 1')
-      .get();
+    const discovery = (
+      await db.query('SELECT * FROM plant_discoveries WHERE student_id = $1 AND plant_id = $2', [1, 1])
+    ).rows[0];
     expect(discovery).toBeTruthy();
 
-    const activity = db
-      .prepare("SELECT * FROM activity_log WHERE action = 'plant_scanned'")
-      .get();
+    const activity = (await db.query("SELECT * FROM activity_log WHERE action = 'plant_scanned'")).rows[0];
     expect(activity).toBeTruthy();
   });
 

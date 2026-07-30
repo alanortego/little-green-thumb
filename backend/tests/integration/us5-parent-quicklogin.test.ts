@@ -2,34 +2,44 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
-import { makeTestDb } from '../helpers/testDb.js';
+import { closeTestDb, makeTestDb, resetSequences } from '../helpers/testDb.js';
 
 describe('US5: Parent quick-login, multi-child picker, and Cookbook assist', () => {
-  const db = makeTestDb();
-  const app = createApp(db);
-  const parentAgent = request.agent(app);
-  const teacherAgent = request.agent(app);
-  const otherTeacherAgent = request.agent(app);
+  let db: Awaited<ReturnType<typeof makeTestDb>>;
+  let app: ReturnType<typeof createApp>;
+  let parentAgent: ReturnType<typeof request.agent>;
+  let teacherAgent: ReturnType<typeof request.agent>;
+  let otherTeacherAgent: ReturnType<typeof request.agent>;
 
-  afterAll(() => db.close());
+  afterAll(() => closeTestDb(db));
 
   beforeAll(async () => {
+    db = await makeTestDb();
+    app = createApp(db);
+    parentAgent = request.agent(app);
+    teacherAgent = request.agent(app);
+    otherTeacherAgent = request.agent(app);
     const hash = bcrypt.hashSync('password123', 4);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (1, \'teacher\', \'Ms. Rivera\', \'t@example.com\', ?)',
-    ).run(hash);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (4, \'teacher\', \'Mr. Lee\', \'l@example.com\', ?)',
-    ).run(hash);
-    db.exec(`
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES (1, 'teacher', 'Ms. Rivera', 't@example.com', $1)`,
+      [hash],
+    );
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES (4, 'teacher', 'Mr. Lee', 'l@example.com', $1)`,
+      [hash],
+    );
+    await db.query(`
       INSERT INTO classes (id, name, teacher_id) VALUES (1, 'Room 4', 1), (2, 'Room 5', 4);
       INSERT INTO students (id, display_name, avatar_key, class_id, parent_quick_code) VALUES
         (1, 'Ava', 'fox', 1, 'CODE-AVA'),
         (2, 'Sam', 'owl', 1, 'CODE-SAM');
-      INSERT INTO recipes (id, name, is_published) VALUES (1, 'Carrot Soup', 1);
-      INSERT INTO plants (id, name, qr_code, is_published) VALUES (1, 'Carrot', 'QR-CARROT', 1);
+      INSERT INTO recipes (id, name, is_published) VALUES (1, 'Carrot Soup', TRUE);
+      INSERT INTO plants (id, name, qr_code, is_published) VALUES (1, 'Carrot', 'QR-CARROT', TRUE);
       INSERT INTO plant_discoveries (student_id, plant_id) VALUES (1, 1);
     `);
+    await resetSequences(db);
 
     await teacherAgent.post('/auth/login').send({ email: 't@example.com', password: 'password123' });
     await otherTeacherAgent
@@ -78,8 +88,9 @@ describe('US5: Parent quick-login, multi-child picker, and Cookbook assist', () 
   });
 
   it("rejects switching to a child that isn't linked to this parent", async () => {
-    db.exec(
-      'INSERT INTO students (id, display_name, avatar_key, class_id) VALUES (3, \'Ben\', \'bear\', 1)',
+    await db.query(
+      'INSERT INTO students (id, display_name, avatar_key, class_id) VALUES ($1, $2, $3, $4)',
+      [3, 'Ben', 'bear', 1],
     );
     const res = await parentAgent.post('/parents/select-student').send({ studentId: 3 });
     expect(res.status).toBe(404);

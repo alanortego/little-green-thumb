@@ -2,32 +2,41 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
-import { makeTestDb } from '../helpers/testDb.js';
+import { closeTestDb, makeTestDb, resetSequences } from '../helpers/testDb.js';
 
 describe('US4: Teacher reviews roster and assists with Cookbook', () => {
-  const db = makeTestDb();
-  const app = createApp(db);
-  const teacherAgent = request.agent(app);
-  const otherTeacherAgent = request.agent(app);
+  let db: Awaited<ReturnType<typeof makeTestDb>>;
+  let app: ReturnType<typeof createApp>;
+  let teacherAgent: ReturnType<typeof request.agent>;
+  let otherTeacherAgent: ReturnType<typeof request.agent>;
 
-  afterAll(() => db.close());
+  afterAll(() => closeTestDb(db));
 
   beforeAll(async () => {
+    db = await makeTestDb();
+    app = createApp(db);
+    teacherAgent = request.agent(app);
+    otherTeacherAgent = request.agent(app);
     const hash = bcrypt.hashSync('password123', 4);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (?, \'teacher\', ?, ?, ?)',
-    ).run(1, 'Ms. Rivera', 't@example.com', hash);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (?, \'teacher\', ?, ?, ?)',
-    ).run(2, 'Mr. Lee', 'l@example.com', hash);
-    db.exec(`
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES ($1, 'teacher', $2, $3, $4)`,
+      [1, 'Ms. Rivera', 't@example.com', hash],
+    );
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES ($1, 'teacher', $2, $3, $4)`,
+      [2, 'Mr. Lee', 'l@example.com', hash],
+    );
+    await db.query(`
       INSERT INTO classes (id, name, teacher_id) VALUES (1, 'Room 4', 1), (2, 'Room 5', 2);
       INSERT INTO students (id, display_name, avatar_key, class_id) VALUES
         (1, 'Ava', 'fox', 1), (2, 'Ben', 'owl', 1);
-      INSERT INTO recipes (id, name, is_published) VALUES (1, 'Carrot Soup', 1);
+      INSERT INTO recipes (id, name, is_published) VALUES (1, 'Carrot Soup', TRUE);
       INSERT INTO cookbook_entries (student_id, recipe_id, added_by, is_made)
-        VALUES (1, 1, 'student', 1);
+        VALUES (1, 1, 'student', TRUE);
     `);
+    await resetSequences(db);
 
     await teacherAgent.post('/auth/login').send({ email: 't@example.com', password: 'password123' });
     await otherTeacherAgent

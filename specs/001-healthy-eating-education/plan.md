@@ -12,24 +12,21 @@ chooses to learn about the plant or see its recipes, adds recipes to a
 personal Cookbook, and later marks them "I made it" and rates them. Teachers
 review/assist student Cookbooks and print QR labels for their garden;
 parents get a fast, low-friction login to view/assist their child; a super
-admin maintains the plant/recipe library and QR-to-plant mapping. Technical
-approach is unchanged from the prior plan revision — a React + TypeScript
-SPA (kid-facing, icon-first, touch-only UI) talking to a small Node/
-TypeScript API backed by a single SQLite file — extended with in-browser QR
-scanning and printable QR-label generation, still the smallest stack that
-meets the constitution's offline-capable, low-end-device bar.
+admin maintains the plant/recipe library and QR-to-plant mapping. The React +
+TypeScript SPA talks to a small Node/TypeScript API backed by PostgreSQL,
+with in-browser QR scanning and printable QR-label generation.
 
 ## Technical Context
 
 **Language/Version**: TypeScript 5.x on Node.js 24 LTS (frontend and backend share one language/toolchain)
-**Primary Dependencies**: React 18 + Vite (frontend build); Radix UI (unstyled, accessible primitives) as the component foundation, Emotion (`@emotion/styled`) as the single styling layer for both standard and bespoke kid-facing components; Express (minimal HTTP API); better-sqlite3 (synchronous SQLite driver); `qr-scanner` (in-browser camera QR decoding, uses the native BarcodeDetector API where available); `qrcode` (server-side QR label image generation for printing)
-**Storage**: SQLite, single file (`data/app.db`), accessed via better-sqlite3; static media (images/audio, generated QR label images) served from disk, cached client-side via Service Worker + browser storage for offline viewing of previously loaded plants/recipes and the student's own Cookbook
+**Primary Dependencies**: React 18 + Vite (frontend build); Radix UI (unstyled, accessible primitives) as the component foundation, Emotion (`@emotion/styled`) as the single styling layer for both standard and bespoke kid-facing components; Express (minimal HTTP API); `pg` + `connect-pg-simple` (PostgreSQL data and sessions); `qr-scanner` (in-browser camera QR decoding, uses the native BarcodeDetector API where available); `qrcode` (server-side QR label image generation for printing)
+**Storage**: PostgreSQL, accessed through `pg`; static media (images/audio, generated QR label images) served from disk, cached client-side via Service Worker + browser storage for offline viewing of previously loaded plants/recipes and the student's own Cookbook
 **Testing**: Vitest for both frontend (+ React Testing Library) and backend (+ supertest) — one test runner, no second framework to maintain
-**Target Platform**: Tablet web browsers (Chrome/Safari on iPad/Android tablets) with rear camera access for QR scanning; single self-hosted Node server per school/district (no cloud dependency required)
+**Target Platform**: Tablet web browsers (Chrome/Safari on iPad/Android tablets) with rear camera access for QR scanning; Render-hosted Node service with Render PostgreSQL
 **Project Type**: web application (frontend + backend)
 **Performance Goals**: Per constitution Principle IV — interactions respond within 100ms, screen transitions complete within 1s on low-end tablets; QR scan-to-recognition within 5s (SC-001)
 **Constraints**: Offline-capable for previously loaded plant/recipe content and the student's own Cookbook (FR-020); touch-only interaction, no hover/right-click/fine-motor dependence (FR-014); 44x44px minimum tap targets and 3rd-grade-or-below reading level (Principle II); camera permission required only for QR scanning, with a non-blocking library-browse fallback if denied (FR-004)
-**Scale/Scope**: Single classroom/school scale — tens of students per class, 12-15 plants with QR labels per garden (Assumptions), low tens of classes per deployment; a single SQLite file and single Node process comfortably cover this
+**Scale/Scope**: Single classroom/school scale — tens of students per class, 12-15 plants with QR labels per garden (Assumptions), and low tens of classes per deployment
 
 ## Constitution Check
 

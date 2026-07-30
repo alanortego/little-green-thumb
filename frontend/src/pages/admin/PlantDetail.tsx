@@ -11,7 +11,7 @@ interface Plant {
   qr_code: string;
   image_path: string | null;
   benefit_text: string | null;
-  is_published: 0 | 1;
+  is_published: boolean;
 }
 
 /** Admin plant detail page (create when :id is "new", otherwise edit) — separate route

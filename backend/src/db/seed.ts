@@ -5,7 +5,7 @@
  * getDb() that applies schema.sql on first use.
  */
 import bcrypt from 'bcryptjs';
-import { getDb } from './connection.js';
+import { closeDb, getDb } from './connection.js';
 
 const DEMO_PASSWORD = 'password123';
 
@@ -71,34 +71,44 @@ const recipeSeeds: { plantName: string; name: string; steps: string[] }[] = [
   { plantName: 'Arugula', name: 'Arugula Pesto Dip', steps: ['Kid adds arugula, parmesan, and walnuts/seeds to a blender or food processor', 'Adult blends while slowly adding olive oil until smooth', 'Serve as a dip with bread sticks or crackers'] },
 ];
 
-function main(): void {
-  const db = getDb();
-  const existing = db
-    .prepare('SELECT id FROM users WHERE email = \'admin@example.com\'')
-    .get() as { id: number } | undefined;
-  if (existing) {
+async function main(): Promise<void> {
+  const db = await getDb();
+  const existing = await db.query<{ id: number }>(
+    'SELECT id FROM users WHERE email = $1',
+    ['admin@example.com'],
+  );
+  if (existing.rowCount) {
     console.log('Demo data already seeded — skipping.');
     return;
   }
 
   const hash = bcrypt.hashSync(DEMO_PASSWORD, 10);
 
-  const insertUser = db.prepare(
-    'INSERT INTO users (role, name, email, password_hash) VALUES (?, ?, ?, ?)',
-  );
-  const adminId = insertUser.run('admin', 'Demo Admin', 'admin@example.com', hash)
-    .lastInsertRowid as number;
-  const teacherId = insertUser.run('teacher', 'Demo Teacher', 'teacher@example.com', hash)
-    .lastInsertRowid as number;
+  const adminId = (
+    await db.query<{ id: number }>(
+      'INSERT INTO users (role, name, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id',
+      ['admin', 'Demo Admin', 'admin@example.com', hash],
+    )
+  ).rows[0].id;
+  const teacherId = (
+    await db.query<{ id: number }>(
+      'INSERT INTO users (role, name, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id',
+      ['teacher', 'Demo Teacher', 'teacher@example.com', hash],
+    )
+  ).rows[0].id;
 
-  const classId = db
-    .prepare('INSERT INTO classes (name, teacher_id) VALUES (?, ?)')
-    .run('Demo Class', teacherId).lastInsertRowid as number;
+  const classId = (
+    await db.query<{ id: number }>(
+      'INSERT INTO classes (name, teacher_id) VALUES ($1, $2) RETURNING id',
+      ['Demo Class', teacherId],
+    )
+  ).rows[0].id;
 
   const PARENT_QUICK_CODE = 'FOX-123';
-  db.prepare(
-    'INSERT INTO students (display_name, avatar_key, class_id, parent_quick_code) VALUES (?, ?, ?, ?)',
-  ).run('Demo Student', 'fox', classId, PARENT_QUICK_CODE);
+  await db.query(
+    'INSERT INTO students (display_name, avatar_key, class_id, parent_quick_code) VALUES ($1, $2, $3, $4)',
+    ['Demo Student', 'fox', classId, PARENT_QUICK_CODE],
+  );
 
   // Images sourced from Wikimedia Commons (public domain / CC-licensed), resized
   // to 600px and served from frontend/public/images/plants/.
@@ -287,46 +297,46 @@ function main(): void {
     },
   ];
 
-  const insertPlant = db.prepare(
-    `INSERT INTO plants (name, qr_code, image_path, benefit_text, is_published, created_by)
-     VALUES (?, ?, ?, ?, 1, ?)`,
-  );
-  const insertGardenSelection = db.prepare(
-    'INSERT INTO garden_selections (class_id, plant_id, selected_by) VALUES (?, ?, ?)',
-  );
-
   const plantIdsByName = new Map<string, number>();
-  plants.forEach((p) => {
-    const id = insertPlant.run(p.name, p.qrCode, p.imagePath, p.benefitText, adminId)
-      .lastInsertRowid as number;
-    insertGardenSelection.run(classId, id, teacherId);
-    plantIdsByName.set(p.name, id);
-  });
+  for (const plant of plants) {
+    const id = (
+      await db.query<{ id: number }>(
+        `INSERT INTO plants (name, qr_code, image_path, benefit_text, is_published, created_by)
+         VALUES ($1, $2, $3, $4, TRUE, $5) RETURNING id`,
+        [plant.name, plant.qrCode, plant.imagePath, plant.benefitText, adminId],
+      )
+    ).rows[0].id;
+    await db.query(
+      'INSERT INTO garden_selections (class_id, plant_id, selected_by) VALUES ($1, $2, $3)',
+      [classId, id, teacherId],
+    );
+    plantIdsByName.set(plant.name, id);
+  }
 
   // Seed all recipes (published, no step images needed — bypasses the
   // publish-route field-gate the same way plants do above).
-  const insertRecipe = db.prepare(
-    'INSERT INTO recipes (name, is_published, created_by) VALUES (?, 1, ?)',
-  );
-  const insertRecipePlant = db.prepare(
-    'INSERT INTO recipe_plants (recipe_id, plant_id) VALUES (?, ?)',
-  );
-  const insertRecipeStep = db.prepare(
-    'INSERT INTO recipe_steps (recipe_id, step_order, step_text) VALUES (?, ?, ?)',
-  );
-
   let recipeCount = 0;
-  recipeSeeds.forEach((r) => {
-    const plantId = plantIdsByName.get(r.plantName);
+  for (const recipe of recipeSeeds) {
+    const plantId = plantIdsByName.get(recipe.plantName);
     if (!plantId) {
-      console.warn(`  skipping recipe "${r.name}" — no matching plant "${r.plantName}"`);
-      return;
+      console.warn(`  skipping recipe "${recipe.name}" — no matching plant "${recipe.plantName}"`);
+      continue;
     }
-    const recipeId = insertRecipe.run(r.name, adminId).lastInsertRowid as number;
-    insertRecipePlant.run(recipeId, plantId);
-    r.steps.forEach((step, i) => insertRecipeStep.run(recipeId, i + 1, step));
+    const recipeId = (
+      await db.query<{ id: number }>(
+        'INSERT INTO recipes (name, is_published, created_by) VALUES ($1, TRUE, $2) RETURNING id',
+        [recipe.name, adminId],
+      )
+    ).rows[0].id;
+    await db.query('INSERT INTO recipe_plants (recipe_id, plant_id) VALUES ($1, $2)', [recipeId, plantId]);
+    for (const [index, step] of recipe.steps.entries()) {
+      await db.query(
+        'INSERT INTO recipe_steps (recipe_id, step_order, step_text) VALUES ($1, $2, $3)',
+        [recipeId, index + 1, step],
+      );
+    }
     recipeCount += 1;
-  });
+  }
 
   console.log('Seeded demo data:');
   console.log(`  admin login:   admin@example.com / ${DEMO_PASSWORD}`);
@@ -337,4 +347,9 @@ function main(): void {
   console.log(`  demo recipes:  ${recipeCount} (published, kid-friendly steps, no step images)`);
 }
 
-main();
+void main()
+  .catch((error: unknown) => {
+    console.error('Failed to seed demo data', error);
+    process.exitCode = 1;
+  })
+  .finally(closeDb);

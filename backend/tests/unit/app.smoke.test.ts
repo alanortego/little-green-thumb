@@ -1,13 +1,18 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
-import { makeTestDb } from '../helpers/testDb.js';
+import { closeTestDb, makeTestDb } from '../helpers/testDb.js';
 
 describe('app smoke test', () => {
-  const db = makeTestDb();
-  const app = createApp(db);
+  let db: Awaited<ReturnType<typeof makeTestDb>>;
+  let app: ReturnType<typeof createApp>;
 
-  afterAll(() => db.close());
+  afterAll(() => closeTestDb(db));
+
+  beforeAll(async () => {
+    db = await makeTestDb();
+    app = createApp(db);
+  });
 
   it('responds to /health', async () => {
     const res = await request(app).get('/health');

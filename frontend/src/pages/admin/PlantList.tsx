@@ -10,7 +10,7 @@ interface Plant {
   qr_code: string;
   image_path: string | null;
   benefit_text: string | null;
-  is_published: 0 | 1;
+  is_published: boolean;
 }
 
 /** Admin plant library — grid list; select a plant to manage its details on a separate page. */

@@ -1,6 +1,4 @@
-// Row shapes matching backend/src/db/schema.sql (data-model.md).
-// ponytail: plain interfaces, no ORM — better-sqlite3 rows are already
-// plain objects, a class-per-entity layer would add nothing here.
+// Row shapes matching backend/src/db/schema.sql.
 
 export interface UserRow {
   id: number;
@@ -8,14 +6,14 @@ export interface UserRow {
   name: string;
   email: string | null;
   password_hash: string | null;
-  created_at: string;
+  created_at: Date;
 }
 
 export interface ClassRow {
   id: number;
   name: string;
   teacher_id: number;
-  created_at: string;
+  created_at: Date;
 }
 
 export interface StudentRow {
@@ -25,7 +23,7 @@ export interface StudentRow {
   class_id: number;
   parent_id: number | null;
   parent_quick_code: string | null;
-  created_at: string;
+  created_at: Date;
 }
 
 export interface PlantRow {
@@ -34,20 +32,20 @@ export interface PlantRow {
   qr_code: string;
   image_path: string | null;
   benefit_text: string | null;
-  is_published: 0 | 1;
+  is_published: boolean;
   created_by: number | null;
-  created_at: string;
-  updated_at: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface RecipeRow {
   id: number;
   name: string;
   image_path: string | null;
-  is_published: 0 | 1;
+  is_published: boolean;
   created_by: number | null;
-  created_at: string;
-  updated_at: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface RecipeStepRow {
@@ -70,19 +68,19 @@ export interface CookbookEntryRow {
   student_id: number;
   recipe_id: number;
   added_by: AddedBy;
-  is_made: 0 | 1;
-  made_at: string | null;
+  is_made: boolean;
+  made_at: Date | null;
   rating: 1 | 2 | 3 | null;
-  rated_at: string | null;
-  created_at: string;
+  rated_at: Date | null;
+  created_at: Date;
 }
 
 export interface PlantDiscoveryRow {
   id: number;
   student_id: number;
   plant_id: number;
-  first_scanned_at: string;
-  last_scanned_at: string;
+  first_scanned_at: Date;
+  last_scanned_at: Date;
 }
 
 export interface GardenSelectionRow {
@@ -90,7 +88,7 @@ export interface GardenSelectionRow {
   class_id: number;
   plant_id: number;
   selected_by: number | null;
-  created_at: string;
+  created_at: Date;
 }
 
 export type ActorType = 'student' | 'teacher' | 'parent' | 'admin';
@@ -102,5 +100,5 @@ export interface ActivityLogRow {
   action: string;
   content_type: 'plant' | 'recipe' | null;
   content_id: number | null;
-  created_at: string;
+  created_at: Date;
 }

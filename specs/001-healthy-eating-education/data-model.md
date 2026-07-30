@@ -1,7 +1,7 @@
 # Phase 1 Data Model: Healthy Eating Education
 
-SQLite schema (single file, `data/app.db`). Types shown are SQLite storage
-classes; booleans are `INTEGER` (0/1); timestamps are `TEXT` ISO-8601.
+PostgreSQL schema. IDs use generated integer identities, booleans use
+`BOOLEAN`, and all lifecycle timestamps use `TIMESTAMPTZ`.
 
 ## users
 
@@ -16,7 +16,7 @@ separate table (`students`) since they don't authenticate with credentials
 | name | TEXT | display name |
 | email | TEXT UNIQUE, nullable | login identifier; null for parent-only accounts using a code |
 | password_hash | TEXT, nullable | bcrypt hash; null for parent-code accounts |
-| created_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
 
 ## classes
 
@@ -25,7 +25,7 @@ separate table (`students`) since they don't authenticate with credentials
 | id | INTEGER PK | |
 | name | TEXT | e.g., "Ms. Rivera's K class" |
 | teacher_id | INTEGER FK → users.id | |
-| created_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
 
 ## students
 
@@ -37,7 +37,7 @@ separate table (`students`) since they don't authenticate with credentials
 | class_id | INTEGER FK → classes.id | one class at a time (Assumptions) |
 | parent_id | INTEGER FK → users.id, nullable | set once parent uses their quick-login code |
 | parent_quick_code | TEXT UNIQUE, nullable | short code a parent enters to link/login (FR-011) |
-| created_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
 
 ## plants
 
@@ -52,10 +52,10 @@ Represents the "Plant" entity, tied to a QR code (FR-001, FR-002, FR-015, FR-016
 | narration_audio_path | TEXT | required to publish |
 | narration_script | TEXT | required to publish |
 | benefit_text | TEXT | single sentence, required to publish |
-| is_published | INTEGER | 0 = draft, 1 = published (FR-016 gate); only published plants are eligible for Garden Selection |
+| is_published | BOOLEAN | `false` = draft, `true` = published (FR-016 gate); only published plants are eligible for Garden Selection |
 | created_by | INTEGER FK → users.id (admin) | |
-| created_at | TEXT | |
-| updated_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
 
 ## recipes
 
@@ -64,10 +64,10 @@ Represents the "Plant" entity, tied to a QR code (FR-001, FR-002, FR-015, FR-016
 | id | INTEGER PK | |
 | name | TEXT | |
 | image_path | TEXT | required to publish |
-| is_published | INTEGER | 0/1 |
+| is_published | BOOLEAN | |
 | created_by | INTEGER FK → users.id (admin) | |
-| created_at | TEXT | |
-| updated_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
 
 ## recipe_steps
 
@@ -99,11 +99,11 @@ A Student's personal Cookbook (FR-006, FR-007, FR-008).
 | student_id | INTEGER FK → students.id | |
 | recipe_id | INTEGER FK → recipes.id | |
 | added_by | TEXT | `student`, `teacher`, or `parent` (who added it — supports FR-010/FR-012 assist) |
-| is_made | INTEGER | 0/1, "I made it" (FR-008) |
-| made_at | TEXT, nullable | |
+| is_made | BOOLEAN | "I made it" (FR-008) |
+| made_at | TIMESTAMPTZ, nullable | |
 | rating | INTEGER, nullable | 1-3, only settable once `is_made = 1` (FR-008) |
-| rated_at | TEXT, nullable | |
-| created_at | TEXT | |
+| rated_at | TIMESTAMPTZ, nullable | |
+| created_at | TIMESTAMPTZ | |
 
 Unique on (student_id, recipe_id) — prevents duplicate adds (FR-006).
 
@@ -117,8 +117,8 @@ plants" view (FR-012) and usage aggregation (FR-019).
 | id | INTEGER PK | |
 | student_id | INTEGER FK → students.id | |
 | plant_id | INTEGER FK → plants.id | |
-| first_scanned_at | TEXT | |
-| last_scanned_at | TEXT | |
+| first_scanned_at | TIMESTAMPTZ | |
+| last_scanned_at | TIMESTAMPTZ | |
 
 Unique on (student_id, plant_id) — one row per student/plant, timestamps
 updated on repeat scans.
@@ -134,7 +134,7 @@ printable QR labels (FR-017, Garden Selection entity).
 | class_id | INTEGER FK → classes.id | |
 | plant_id | INTEGER FK → plants.id | |
 | selected_by | INTEGER FK → users.id (teacher/admin) | |
-| created_at | TEXT | |
+| created_at | TIMESTAMPTZ | |
 
 Unique on (class_id, plant_id).
 
@@ -150,7 +150,7 @@ Usage monitoring (FR-019, Super Admin dashboard).
 | action | TEXT | e.g., `plant_scanned`, `recipe_added_to_cookbook`, `recipe_made`, `recipe_rated`, `plant_published`, `garden_labels_printed` |
 | content_type | TEXT | nullable, `plant`/`recipe` when applicable |
 | content_id | INTEGER | nullable |
-| created_at | TEXT | indexed for date-range queries (usage dashboard) |
+| created_at | TIMESTAMPTZ | indexed for date-range queries (usage dashboard) |
 
 ## Relationships summary
 

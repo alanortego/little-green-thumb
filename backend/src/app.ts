@@ -1,5 +1,5 @@
 import express from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { createSessionMiddleware } from './middleware/session.js';
 import { idleTimeout } from './middleware/idleTimeout.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -16,9 +16,9 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
 
 /**
  * Builds the Express app. Takes `db` as a parameter (rather than importing
- * the singleton directly) so tests can pass an in-memory database.
+ * the singleton directly) so tests can pass an isolated PostgreSQL pool.
  */
-export function createApp(db: Database.Database) {
+export function createApp(db: Pool) {
   const app = express();
 
   // Ponytail: hand-rolled CORS instead of the `cors` package — the frontend

@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool, PoolClient } from 'pg';
+import type { Db } from '../db/connection.js';
 import { requireAuth, requireRole } from '../middleware/roleGuard.js';
 import type { RecipeRow, RecipeStepRow } from '../models/types.js';
 
@@ -14,90 +15,98 @@ interface StepInput {
   stepText?: string | null;
 }
 
-function loadRecipeWithSteps(db: Database.Database, recipeId: number): RecipeWithSteps | undefined {
-  const recipe = db.prepare<[number], RecipeRow>('SELECT * FROM recipes WHERE id = ?').get(recipeId);
+async function loadRecipeWithSteps(db: Db, recipeId: number): Promise<RecipeWithSteps | undefined> {
+  const recipe = (await db.query<RecipeRow>('SELECT * FROM recipes WHERE id = $1', [recipeId])).rows[0];
   if (!recipe) {
-    return undefined; 
+    return undefined;
   }
-  const steps = db
-    .prepare<[number], RecipeStepRow>(
-      'SELECT * FROM recipe_steps WHERE recipe_id = ? ORDER BY step_order',
+  const steps = (
+    await db.query<RecipeStepRow>(
+      'SELECT * FROM recipe_steps WHERE recipe_id = $1 ORDER BY step_order',
+      [recipeId],
     )
-    .all(recipeId);
-  const plantIds = db
-    .prepare<[number], { plant_id: number }>('SELECT plant_id FROM recipe_plants WHERE recipe_id = ?')
-    .all(recipeId)
-    .map((row) => row.plant_id);
+  ).rows;
+  const plantIds = (
+    await db.query<{ plant_id: number }>(
+      'SELECT plant_id FROM recipe_plants WHERE recipe_id = $1',
+      [recipeId],
+    )
+  ).rows.map((row) => row.plant_id);
   return { ...recipe, steps, plantIds };
 }
 
-/** Replace a recipe's steps and linked plants inside a transaction (used by create + update). */
-function replaceStepsAndPlants(
-  db: Database.Database,
+async function replaceStepsAndPlants(
+  db: Pool,
   recipeId: number,
   steps: StepInput[],
   plantIds: number[],
-): void {
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM recipe_steps WHERE recipe_id = ?').run(recipeId);
-    const insertStep = db.prepare(
-      `INSERT INTO recipe_steps (recipe_id, step_order, image_path, step_text)
-       VALUES (?, ?, ?, ?)`,
-    );
-    for (const step of steps) {
-      insertStep.run(
-        recipeId,
-        step.stepOrder,
-        step.imagePath ?? null,
-        step.stepText ?? null,
-      );
-    }
-
-    db.prepare('DELETE FROM recipe_plants WHERE recipe_id = ?').run(recipeId);
-    const insertPlant = db.prepare('INSERT INTO recipe_plants (recipe_id, plant_id) VALUES (?, ?)');
-    for (const plantId of plantIds) {
-      insertPlant.run(recipeId, plantId);
-    }
-  });
-  tx();
+): Promise<void> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await replaceStepsAndPlantsInTransaction(client, recipeId, steps, plantIds);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-/** Fields FR-016 requires before a Recipe can be published: at least one step and
- * one linked plant, plus a picture on every step. */
+async function replaceStepsAndPlantsInTransaction(
+  db: PoolClient,
+  recipeId: number,
+  steps: StepInput[],
+  plantIds: number[],
+): Promise<void> {
+  await db.query('DELETE FROM recipe_steps WHERE recipe_id = $1', [recipeId]);
+  for (const step of steps) {
+    await db.query(
+      `INSERT INTO recipe_steps (recipe_id, step_order, image_path, step_text)
+       VALUES ($1, $2, $3, $4)`,
+      [recipeId, step.stepOrder, step.imagePath ?? null, step.stepText ?? null],
+    );
+  }
+
+  await db.query('DELETE FROM recipe_plants WHERE recipe_id = $1', [recipeId]);
+  for (const plantId of plantIds) {
+    await db.query('INSERT INTO recipe_plants (recipe_id, plant_id) VALUES ($1, $2)', [recipeId, plantId]);
+  }
+}
+
 function missingRecipeFields(recipe: RecipeWithSteps): string[] {
   const missing: string[] = [];
   if (recipe.steps.length === 0) {
-    missing.push('steps'); 
+    missing.push('steps');
   }
   recipe.steps.forEach((step, index) => {
     if (!step.image_path) {
-      missing.push(`step_${index + 1}_image_path`); 
+      missing.push(`step_${index + 1}_image_path`);
     }
   });
   return missing;
 }
 
-export function createRecipesRouter(db: Database.Database): Router {
+export function createRecipesRouter(db: Pool): Router {
   const router = Router();
 
-  // GET /plants/:id/recipes — the "See Recipes" pathway (FR-003).
-  router.get('/plants/:id/recipes', requireAuth, (req, res) => {
-    const plantId = String(req.params.id);
+  router.get('/plants/:id/recipes', requireAuth, async (req, res) => {
     const includeDrafts = req.session.role === 'admin' && req.query.includeDrafts === '1';
-    const recipes = db
-      .prepare<[string], RecipeRow>(
+    const recipes = (
+      await db.query<RecipeRow>(
         `SELECT r.* FROM recipes r
          JOIN recipe_plants rp ON rp.recipe_id = r.id
-         WHERE rp.plant_id = ? ${includeDrafts ? '' : 'AND r.is_published = 1'}
+         WHERE rp.plant_id = $1 ${includeDrafts ? '' : 'AND r.is_published = TRUE'}
          ORDER BY r.name`,
+        [req.params.id],
       )
-      .all(plantId);
+    ).rows;
     res.json(recipes);
   });
 
-  // GET /recipes/:id — recipe detail with ordered steps.
-  router.get('/recipes/:id', requireAuth, (req, res) => {
-    const recipe = loadRecipeWithSteps(db, Number(req.params.id));
+  router.get('/recipes/:id', requireAuth, async (req, res) => {
+    const recipe = await loadRecipeWithSteps(db, Number(req.params.id));
     if (!recipe) {
       res.status(404).json({ error: 'recipe_not_found' });
       return;
@@ -105,8 +114,7 @@ export function createRecipesRouter(db: Database.Database): Router {
     res.json(recipe);
   });
 
-  // POST /recipes — create a draft Recipe with its steps and linked plants (FR-015). Admin-only.
-  router.post('/recipes', requireRole('admin'), (req, res) => {
+  router.post('/recipes', requireRole('admin'), async (req, res) => {
     const { name, plantIds, steps } = req.body as {
       name?: string;
       plantIds?: number[];
@@ -117,19 +125,31 @@ export function createRecipesRouter(db: Database.Database): Router {
       return;
     }
 
-    const info = db
-      .prepare('INSERT INTO recipes (name, created_by) VALUES (?, ?)')
-      .run(name, req.session.userId as number);
-    const recipeId = info.lastInsertRowid as number;
-    replaceStepsAndPlants(db, recipeId, steps ?? [], plantIds ?? []);
+    const client = await db.connect();
+    let recipeId: number;
+    try {
+      await client.query('BEGIN');
+      recipeId = (
+        await client.query<{ id: number }>(
+          'INSERT INTO recipes (name, created_by) VALUES ($1, $2) RETURNING id',
+          [name, req.session.userId],
+        )
+      ).rows[0].id;
+      await replaceStepsAndPlantsInTransaction(client, recipeId, steps ?? [], plantIds ?? []);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
-    res.status(201).json(loadRecipeWithSteps(db, recipeId));
+    res.status(201).json(await loadRecipeWithSteps(db, recipeId!));
   });
 
-  // PUT /recipes/:id — replace name/steps/linked plants (FR-015). Admin-only.
-  router.put('/recipes/:id', requireRole('admin'), (req, res) => {
+  router.put('/recipes/:id', requireRole('admin'), async (req, res) => {
     const recipeId = Number(req.params.id);
-    const existing = db.prepare<[number], RecipeRow>('SELECT * FROM recipes WHERE id = ?').get(recipeId);
+    const existing = (await db.query<RecipeRow>('SELECT * FROM recipes WHERE id = $1', [recipeId])).rows[0];
     if (!existing) {
       res.status(404).json({ error: 'recipe_not_found' });
       return;
@@ -142,38 +162,33 @@ export function createRecipesRouter(db: Database.Database): Router {
       steps?: StepInput[];
     };
 
-    db.prepare(
+    await db.query(
       `UPDATE recipes SET
-         name = COALESCE(?, name),
-         image_path = COALESCE(?, image_path),
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ?`,
-    ).run(name ?? null, imagePath ?? null, recipeId);
+         name = COALESCE($1, name),
+         image_path = COALESCE($2, image_path),
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [name ?? null, imagePath ?? null, recipeId],
+    );
 
     if (steps !== undefined || plantIds !== undefined) {
-      const current = loadRecipeWithSteps(db, recipeId)!;
+      const current = (await loadRecipeWithSteps(db, recipeId))!;
       const nextSteps =
         steps
-        ?? current.steps.map((s) => ({
-          stepOrder: s.step_order,
-          imagePath: s.image_path,
-          stepText: s.step_text,
+        ?? current.steps.map((step) => ({
+          stepOrder: step.step_order,
+          imagePath: step.image_path,
+          stepText: step.step_text,
         }));
-      const nextPlantIds =
-        plantIds
-        ?? db
-          .prepare<[number], { plant_id: number }>('SELECT plant_id FROM recipe_plants WHERE recipe_id = ?')
-          .all(recipeId)
-          .map((r) => r.plant_id);
-      replaceStepsAndPlants(db, recipeId, nextSteps, nextPlantIds);
+      const nextPlantIds = plantIds ?? current.plantIds;
+      await replaceStepsAndPlants(db, recipeId, nextSteps, nextPlantIds);
     }
 
-    res.json(loadRecipeWithSteps(db, recipeId));
+    res.json(await loadRecipeWithSteps(db, recipeId));
   });
 
-  // POST /recipes/:id/publish — field-gated publish (FR-016). Admin-only.
-  router.post('/recipes/:id/publish', requireRole('admin'), (req, res) => {
-    const recipe = loadRecipeWithSteps(db, Number(req.params.id));
+  router.post('/recipes/:id/publish', requireRole('admin'), async (req, res) => {
+    const recipe = await loadRecipeWithSteps(db, Number(req.params.id));
     if (!recipe) {
       res.status(404).json({ error: 'recipe_not_found' });
       return;
@@ -185,8 +200,11 @@ export function createRecipesRouter(db: Database.Database): Router {
       return;
     }
 
-    db.prepare('UPDATE recipes SET is_published = 1 WHERE id = ?').run(recipe.id);
-    res.json(loadRecipeWithSteps(db, recipe.id));
+    await db.query(
+      'UPDATE recipes SET is_published = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [recipe.id],
+    );
+    res.json(await loadRecipeWithSteps(db, recipe.id));
   });
 
   return router;

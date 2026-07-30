@@ -10,7 +10,7 @@ interface CookbookEntry {
   recipe_id: number;
   recipe_name: string;
   recipe_image_path: string | null;
-  is_made: 0 | 1;
+  is_made: boolean;
   rating: 1 | 2 | 3 | null;
   created_at: string;
 }

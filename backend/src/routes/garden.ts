@@ -1,51 +1,52 @@
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { requireRole } from '../middleware/roleGuard.js';
 import { logActivity } from '../services/activityLog.js';
 import { generateQrLabelDataUrl } from '../services/qrLabelGenerator.js';
 import type { PlantRow } from '../models/types.js';
 
-/** Teachers may only manage their own class's garden; admins may manage any. */
-function canAccessClass(db: Database.Database, req: { session: { role?: string; userId?: number } }, classId: number): boolean {
+async function canAccessClass(
+  db: Pool,
+  req: { session: { role?: string; userId?: number } },
+  classId: number,
+): Promise<boolean> {
   if (req.session.role === 'admin') {
-    return true; 
+    return true;
   }
-  const owned = db
-    .prepare('SELECT 1 FROM classes WHERE id = ? AND teacher_id = ?')
-    .get(classId, req.session.userId);
-  return Boolean(owned);
+  const owned = await db.query(
+    'SELECT 1 FROM classes WHERE id = $1 AND teacher_id = $2',
+    [classId, req.session.userId],
+  );
+  return Boolean(owned.rowCount);
 }
 
-function loadGardenSelection(db: Database.Database, classId: number): PlantRow[] {
-  return db
-    .prepare<[number], PlantRow>(
+async function loadGardenSelection(db: Pool, classId: number): Promise<PlantRow[]> {
+  return (
+    await db.query<PlantRow>(
       `SELECT p.* FROM plants p
        JOIN garden_selections gs ON gs.plant_id = p.id
-       WHERE gs.class_id = ?
+       WHERE gs.class_id = $1
        ORDER BY p.name`,
+      [classId],
     )
-    .all(classId);
+  ).rows;
 }
 
-/**
- * US7: garden selection (which published plants are physically present) and
- * the printable QR label sheet generated from it (FR-017).
- */
-export function createGardenRouter(db: Database.Database): Router {
+export function createGardenRouter(db: Pool): Router {
   const router = Router();
 
-  router.get('/classes/:id/garden-selection', requireRole('teacher', 'admin'), (req, res) => {
+  router.get('/classes/:id/garden-selection', requireRole('teacher', 'admin'), async (req, res) => {
     const classId = Number(req.params.id);
-    if (!canAccessClass(db, req, classId)) {
+    if (!(await canAccessClass(db, req, classId))) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
-    res.json(loadGardenSelection(db, classId));
+    res.json(await loadGardenSelection(db, classId));
   });
 
-  router.put('/classes/:id/garden-selection', requireRole('teacher', 'admin'), (req, res) => {
+  router.put('/classes/:id/garden-selection', requireRole('teacher', 'admin'), async (req, res) => {
     const classId = Number(req.params.id);
-    if (!canAccessClass(db, req, classId)) {
+    if (!(await canAccessClass(db, req, classId))) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
@@ -56,32 +57,35 @@ export function createGardenRouter(db: Database.Database): Router {
       return;
     }
 
-    const tx = db.transaction(() => {
-      db.prepare('DELETE FROM garden_selections WHERE class_id = ?').run(classId);
-      const insert = db.prepare(
-        'INSERT INTO garden_selections (class_id, plant_id, selected_by) VALUES (?, ?, ?)',
-      );
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM garden_selections WHERE class_id = $1', [classId]);
       for (const plantId of plantIds) {
-        insert.run(classId, plantId, req.session.userId as number);
+        await client.query(
+          'INSERT INTO garden_selections (class_id, plant_id, selected_by) VALUES ($1, $2, $3)',
+          [classId, plantId, req.session.userId],
+        );
       }
-    });
-    tx();
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
-    res.json(loadGardenSelection(db, classId));
+    res.json(await loadGardenSelection(db, classId));
   });
 
-  // GET /classes/:id/garden-labels.pdf — a printable HTML sheet; the
-  // teacher/admin uses the browser's print-to-PDF to produce the actual
-  // file (per contracts/api.md), so this serves HTML rather than a PDF
-  // binary. ponytail: no server-side PDF library needed for that.
   router.get('/classes/:id/garden-labels.pdf', requireRole('teacher', 'admin'), async (req, res) => {
     const classId = Number(req.params.id);
-    if (!canAccessClass(db, req, classId)) {
+    if (!(await canAccessClass(db, req, classId))) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
 
-    const plants = loadGardenSelection(db, classId);
+    const plants = await loadGardenSelection(db, classId);
     if (plants.length === 0) {
       res.status(404).json({ error: 'empty_selection' });
       return;
@@ -94,7 +98,7 @@ export function createGardenRouter(db: Database.Database): Router {
       })),
     );
 
-    logActivity(db, {
+    await logActivity(db, {
       actorType: req.session.role === 'admin' ? 'admin' : 'teacher',
       actorId: req.session.userId as number,
       action: 'garden_labels_printed',

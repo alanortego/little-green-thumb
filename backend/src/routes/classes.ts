@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { requireRole } from '../middleware/roleGuard.js';
 
 /**
@@ -7,37 +7,39 @@ import { requireRole } from '../middleware/roleGuard.js';
  * (cookbookCount, madeCount) plus distinct plants discovered, so
  * Roster.tsx can render the whole class without N follow-up requests.
  */
-export function createClassesRouter(db: Database.Database): Router {
+export function createClassesRouter(db: Pool): Router {
   const router = Router();
 
-  router.get('/classes/:id/students', requireRole('teacher', 'admin'), (req, res) => {
+  router.get('/classes/:id/students', requireRole('teacher', 'admin'), async (req, res) => {
     const classId = Number(req.params.id);
 
     if (req.session.role === 'teacher') {
-      const owned = db
-        .prepare('SELECT 1 FROM classes WHERE id = ? AND teacher_id = ?')
-        .get(classId, req.session.userId);
-      if (!owned) {
+      const owned = await db.query(
+        'SELECT 1 FROM classes WHERE id = $1 AND teacher_id = $2',
+        [classId, req.session.userId],
+      );
+      if (!owned.rowCount) {
         res.status(403).json({ error: 'forbidden' });
         return;
       }
     }
 
-    const students = db
-      .prepare(
+    const students = (
+      await db.query(
         `SELECT
            s.id, s.display_name, s.avatar_key,
-           COUNT(DISTINCT ce.id) AS cookbookCount,
-           COUNT(DISTINCT CASE WHEN ce.is_made = 1 THEN ce.id END) AS madeCount,
-           COUNT(DISTINCT pd.plant_id) AS plantsDiscovered
+           COUNT(DISTINCT ce.id)::int AS "cookbookCount",
+           COUNT(DISTINCT ce.id) FILTER (WHERE ce.is_made)::int AS "madeCount",
+           COUNT(DISTINCT pd.plant_id)::int AS "plantsDiscovered"
          FROM students s
          LEFT JOIN cookbook_entries ce ON ce.student_id = s.id
          LEFT JOIN plant_discoveries pd ON pd.student_id = s.id
-         WHERE s.class_id = ?
+         WHERE s.class_id = $1
          GROUP BY s.id
          ORDER BY s.display_name`,
+        [classId],
       )
-      .all(classId);
+    ).rows;
 
     res.json(students);
   });

@@ -2,24 +2,33 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
-import { makeTestDb } from '../helpers/testDb.js';
+import { closeTestDb, makeTestDb, resetSequences } from '../helpers/testDb.js';
 
 describe('US6: Super admin builds the Plant and Recipe library', () => {
-  const db = makeTestDb();
-  const app = createApp(db);
-  const adminAgent = request.agent(app);
-  const teacherAgent = request.agent(app);
+  let db: Awaited<ReturnType<typeof makeTestDb>>;
+  let app: ReturnType<typeof createApp>;
+  let adminAgent: ReturnType<typeof request.agent>;
+  let teacherAgent: ReturnType<typeof request.agent>;
 
-  afterAll(() => db.close());
+  afterAll(() => closeTestDb(db));
 
   beforeAll(async () => {
+    db = await makeTestDb();
+    app = createApp(db);
+    adminAgent = request.agent(app);
+    teacherAgent = request.agent(app);
     const hash = bcrypt.hashSync('password123', 4);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (1, \'admin\', \'Super Admin\', \'admin@example.com\', ?)',
-    ).run(hash);
-    db.prepare(
-      'INSERT INTO users (id, role, name, email, password_hash) VALUES (2, \'teacher\', \'Ms. Rivera\', \'t@example.com\', ?)',
-    ).run(hash);
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES (1, 'admin', 'Super Admin', 'admin@example.com', $1)`,
+      [hash],
+    );
+    await db.query(
+      `INSERT INTO users (id, role, name, email, password_hash)
+       VALUES (2, 'teacher', 'Ms. Rivera', 't@example.com', $1)`,
+      [hash],
+    );
+    await resetSequences(db);
 
     await adminAgent.post('/auth/login').send({ email: 'admin@example.com', password: 'password123' });
     await teacherAgent.post('/auth/login').send({ email: 't@example.com', password: 'password123' });
@@ -33,7 +42,7 @@ describe('US6: Super admin builds the Plant and Recipe library', () => {
   it('creates a draft plant and blocks publish until required fields are set', async () => {
     const createRes = await adminAgent.post('/plants').send({ name: 'Carrot', qrCode: 'QR-CARROT' });
     expect(createRes.status).toBe(201);
-    expect(createRes.body.is_published).toBe(0);
+    expect(createRes.body.is_published).toBe(false);
     const plantId = createRes.body.id;
 
     const blockedPublish = await adminAgent.post(`/plants/${plantId}/publish`);
@@ -50,7 +59,7 @@ describe('US6: Super admin builds the Plant and Recipe library', () => {
 
     const publishRes = await adminAgent.post(`/plants/${plantId}/publish`);
     expect(publishRes.status).toBe(200);
-    expect(publishRes.body.is_published).toBe(1);
+    expect(publishRes.body.is_published).toBe(true);
   });
 
   it('creates a recipe with steps/plants and blocks publish until every step has media', async () => {
@@ -85,11 +94,11 @@ describe('US6: Super admin builds the Plant and Recipe library', () => {
 
     const publishRes = await adminAgent.post(`/recipes/${recipeId}/publish`);
     expect(publishRes.status).toBe(200);
-    expect(publishRes.body.is_published).toBe(1);
+    expect(publishRes.body.is_published).toBe(true);
   });
 
   it('returns aggregate usage counts, optionally filtered by date range', async () => {
-    db.exec(`
+    await db.query(`
       INSERT INTO activity_log (actor_type, actor_id, action, created_at) VALUES
         ('student', 1, 'plant_scanned', '2024-01-01T00:00:00.000Z'),
         ('student', 1, 'recipe_added_to_cookbook', '2024-01-02T00:00:00.000Z'),

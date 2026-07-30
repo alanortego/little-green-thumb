@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { requireRole } from '../middleware/roleGuard.js';
 
 /**
@@ -7,35 +7,32 @@ import { requireRole } from '../middleware/roleGuard.js';
  * dashboard (FR-019). `from`/`to` are ISO date strings (inclusive); both are
  * optional — an open range covers all activity.
  */
-export function createAdminRouter(db: Database.Database): Router {
+export function createAdminRouter(db: Pool): Router {
   const router = Router();
 
-  router.get('/admin/usage', requireRole('admin'), (req, res) => {
+  router.get('/admin/usage', requireRole('admin'), async (req, res) => {
     const from = typeof req.query.from === 'string' ? req.query.from : null;
     const to = typeof req.query.to === 'string' ? req.query.to : null;
 
-    const countForAction = (action: string): number => {
-      const row = db
-        .prepare<
-        [string, string | null, string | null, string | null, string | null],
-        { count: number }
-      >(
-          `SELECT COUNT(*) as count FROM activity_log
-           WHERE action = ?
-             AND (? IS NULL OR created_at >= ?)
-             AND (? IS NULL OR created_at <= ?)`,
+    const countForAction = async (action: string): Promise<number> => {
+      const row = (
+        await db.query<{ count: number }>(
+          `SELECT COUNT(*)::int AS count FROM activity_log
+           WHERE action = $1
+             AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+             AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)`,
+          [action, from, to],
         )
-        .get(action, from, from, to, to);
+      ).rows[0];
       return row?.count ?? 0;
     };
 
-    res.json({
-      from,
-      to,
-      plantsScanned: countForAction('plant_scanned'),
-      recipesAdded: countForAction('recipe_added_to_cookbook'),
-      recipesMade: countForAction('recipe_made'),
-    });
+    const [plantsScanned, recipesAdded, recipesMade] = await Promise.all([
+      countForAction('plant_scanned'),
+      countForAction('recipe_added_to_cookbook'),
+      countForAction('recipe_made'),
+    ]);
+    res.json({ from, to, plantsScanned, recipesAdded, recipesMade });
   });
 
   return router;

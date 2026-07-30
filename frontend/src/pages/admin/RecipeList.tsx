@@ -12,7 +12,7 @@ interface Plant {
 interface Recipe {
   id: number;
   name: string;
-  is_published: 0 | 1;
+  is_published: boolean;
 }
 
 /** Admin recipe library — pick a plant, browse its recipes as a grid, manage details on a

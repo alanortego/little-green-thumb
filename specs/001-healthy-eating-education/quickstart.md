@@ -4,6 +4,7 @@
 
 - Node.js 24 LTS
 - npm
+- PostgreSQL 14+ (Render provides `DATABASE_URL` in production)
 - A tablet or laptop with a webcam (for QR scan testing) — or use printed
   test QR codes generated in step 3 and hold them up to any camera
 
@@ -13,7 +14,12 @@
 # backend
 cd backend
 npm install
-npm run db:migrate   # creates data/app.db from schema.sql, seeds a demo class, plant, and recipe
+
+# Local development uses a dedicated database. Create it once, then set
+# DATABASE_URL in your shell or local environment file.
+createdb -h localhost -U postgres little_green_thumb_development
+export DATABASE_URL=postgres://postgres:<password>@localhost:5432/little_green_thumb_development
+npm run db:migrate   # applies schema.sql and idempotently seeds demo data
 npm run dev           # starts Express API on :3001
 
 # frontend (separate terminal)
@@ -56,6 +62,18 @@ npm run dev           # starts Vite dev server on :5173, proxying /api to :3001
 ## Tests
 
 ```bash
-cd backend && npm test    # Vitest + supertest contract/integration tests
+# Tests use a dedicated PostgreSQL database and an isolated schema per test file.
+createdb -h localhost -U postgres little_green_thumb_test
+cd backend && TEST_DATABASE_URL=postgres://postgres:<password>@localhost:5432/little_green_thumb_test npm test
 cd frontend && npm test   # Vitest + React Testing Library
 ```
+
+## Deployment environment
+
+Set `DATABASE_URL` to the PostgreSQL connection string supplied by Render and
+set a strong `SESSION_SECRET`. The application creates its idempotent
+application schema and PostgreSQL-backed session table on startup. Run
+`npm run db:migrate` once against a new production database to add the demo
+seed data; repeated runs leave existing seeded data unchanged. When connecting
+from a local machine to Render's external database URL, append
+`sslmode=require` to the URL query string.

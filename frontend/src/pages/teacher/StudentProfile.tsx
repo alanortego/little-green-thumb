@@ -8,7 +8,7 @@ interface CookbookEntry {
   id: number;
   recipe_id: number;
   recipe_name: string;
-  is_made: 0 | 1;
+  is_made: boolean;
   rating: 1 | 2 | 3 | null;
 }
 

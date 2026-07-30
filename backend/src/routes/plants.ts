@@ -1,40 +1,35 @@
 import { Router } from 'express';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { requireAuth, requireRole } from '../middleware/roleGuard.js';
 import { logActivity } from '../services/activityLog.js';
 import type { PlantRow } from '../models/types.js';
 
-/** Fields FR-016 requires before a Plant can be published. */
 function missingPlantFields(plant: PlantRow): string[] {
   const missing: string[] = [];
   if (!plant.image_path) {
-    missing.push('image_path'); 
+    missing.push('image_path');
   }
   if (!plant.benefit_text) {
-    missing.push('benefit_text'); 
+    missing.push('benefit_text');
   }
   return missing;
 }
 
-export function createPlantsRouter(db: Database.Database): Router {
+export function createPlantsRouter(db: Pool): Router {
   const router = Router();
 
-  // GET /plants — published plants for everyone; admin can add drafts via ?includeDrafts=1 (FR-004).
-  router.get('/', requireAuth, (req, res) => {
+  router.get('/', requireAuth, async (req, res) => {
     const includeDrafts = req.session.role === 'admin' && req.query.includeDrafts === '1';
     const plants = includeDrafts
-      ? db.prepare<[], PlantRow>('SELECT * FROM plants ORDER BY name').all()
-      : db
-        .prepare<[], PlantRow>('SELECT * FROM plants WHERE is_published = 1 ORDER BY name')
-        .all();
+      ? (await db.query<PlantRow>('SELECT * FROM plants ORDER BY name')).rows
+      : (await db.query<PlantRow>('SELECT * FROM plants WHERE is_published = TRUE ORDER BY name')).rows;
     res.json(plants);
   });
 
-  // GET /plants/:id — plant benefit page detail (FR-002).
-  router.get('/:id', requireAuth, (req, res) => {
-    const plant = db
-      .prepare<[string], PlantRow>('SELECT * FROM plants WHERE id = ?')
-      .get(String(req.params.id));
+  router.get('/:id', requireAuth, async (req, res) => {
+    const plant = (
+      await db.query<PlantRow>('SELECT * FROM plants WHERE id = $1', [req.params.id])
+    ).rows[0];
     if (!plant) {
       res.status(404).json({ error: 'plant_not_found' });
       return;
@@ -42,27 +37,25 @@ export function createPlantsRouter(db: Database.Database): Router {
     res.json(plant);
   });
 
-  // POST /plants — create a draft Plant entry (FR-015). Admin-only.
-  router.post('/', requireRole('admin'), (req, res) => {
+  router.post('/', requireRole('admin'), async (req, res) => {
     const { name, qrCode } = req.body as { name?: string; qrCode?: string };
     if (!name || !qrCode) {
       res.status(400).json({ error: 'name_and_qr_code_required' });
       return;
     }
 
-    const info = db
-      .prepare('INSERT INTO plants (name, qr_code, created_by) VALUES (?, ?, ?)')
-      .run(name, qrCode, req.session.userId as number);
-    const created = db
-      .prepare<[number], PlantRow>('SELECT * FROM plants WHERE id = ?')
-      .get(info.lastInsertRowid as number);
+    const created = (
+      await db.query<PlantRow>(
+        'INSERT INTO plants (name, qr_code, created_by) VALUES ($1, $2, $3) RETURNING *',
+        [name, qrCode, req.session.userId],
+      )
+    ).rows[0];
     res.status(201).json(created);
   });
 
-  // PUT /plants/:id — edit any field (FR-015). Admin-only.
-  router.put('/:id', requireRole('admin'), (req, res) => {
+  router.put('/:id', requireRole('admin'), async (req, res) => {
     const plantId = Number(req.params.id);
-    const existing = db.prepare<[number], PlantRow>('SELECT * FROM plants WHERE id = ?').get(plantId);
+    const existing = (await db.query<PlantRow>('SELECT * FROM plants WHERE id = $1', [plantId])).rows[0];
     if (!existing) {
       res.status(404).json({ error: 'plant_not_found' });
       return;
@@ -75,30 +68,25 @@ export function createPlantsRouter(db: Database.Database): Router {
       benefitText?: string | null;
     };
 
-    db.prepare(
-      `UPDATE plants SET
-         name = COALESCE(?, name),
-         qr_code = COALESCE(?, qr_code),
-         image_path = COALESCE(?, image_path),
-         benefit_text = COALESCE(?, benefit_text),
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-       WHERE id = ?`,
-    ).run(
-      name ?? null,
-      qrCode ?? null,
-      imagePath ?? null,
-      benefitText ?? null,
-      plantId,
-    );
-
-    const updated = db.prepare<[number], PlantRow>('SELECT * FROM plants WHERE id = ?').get(plantId);
+    const updated = (
+      await db.query<PlantRow>(
+        `UPDATE plants SET
+           name = COALESCE($1, name),
+           qr_code = COALESCE($2, qr_code),
+           image_path = COALESCE($3, image_path),
+           benefit_text = COALESCE($4, benefit_text),
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = $5
+         RETURNING *`,
+        [name ?? null, qrCode ?? null, imagePath ?? null, benefitText ?? null, plantId],
+      )
+    ).rows[0];
     res.json(updated);
   });
 
-  // POST /plants/:id/publish — field-gated publish (FR-016). Admin-only.
-  router.post('/:id/publish', requireRole('admin'), (req, res) => {
+  router.post('/:id/publish', requireRole('admin'), async (req, res) => {
     const plantId = Number(req.params.id);
-    const plant = db.prepare<[number], PlantRow>('SELECT * FROM plants WHERE id = ?').get(plantId);
+    const plant = (await db.query<PlantRow>('SELECT * FROM plants WHERE id = $1', [plantId])).rows[0];
     if (!plant) {
       res.status(404).json({ error: 'plant_not_found' });
       return;
@@ -110,34 +98,39 @@ export function createPlantsRouter(db: Database.Database): Router {
       return;
     }
 
-    db.prepare('UPDATE plants SET is_published = 1 WHERE id = ?').run(plantId);
-    const published = db.prepare<[number], PlantRow>('SELECT * FROM plants WHERE id = ?').get(plantId);
+    const published = (
+      await db.query<PlantRow>(
+        'UPDATE plants SET is_published = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+        [plantId],
+      )
+    ).rows[0];
     res.json(published);
   });
 
-  // GET /plants/by-qr/:qrCode — resolves a scanned QR code to its Plant (FR-001, FR-018)
-  // and records a plant_discoveries row for the active student.
-  router.get('/by-qr/:qrCode', requireAuth, (req, res) => {
-    const plant = db
-      .prepare<[string], PlantRow>('SELECT * FROM plants WHERE qr_code = ? AND is_published = 1')
-      .get(String(req.params.qrCode));
+  router.get('/by-qr/:qrCode', requireAuth, async (req, res) => {
+    const plant = (
+      await db.query<PlantRow>(
+        'SELECT * FROM plants WHERE qr_code = $1 AND is_published = TRUE',
+        [req.params.qrCode],
+      )
+    ).rows[0];
 
     if (!plant) {
-      // Friendly 404 — the client shows a retry/browse-library fallback (Edge Cases, User Story 1).
       res.status(404).json({ error: 'qr_code_not_recognized' });
       return;
     }
 
     const studentId = req.session.studentId;
     if (req.session.role === 'child' && studentId) {
-      db.prepare(
-        `INSERT INTO plant_discoveries (student_id, plant_id, first_scanned_at, last_scanned_at)
-         VALUES (@studentId, @plantId, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      await db.query(
+        `INSERT INTO plant_discoveries (student_id, plant_id)
+         VALUES ($1, $2)
          ON CONFLICT (student_id, plant_id)
-         DO UPDATE SET last_scanned_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-      ).run({ studentId, plantId: plant.id });
+         DO UPDATE SET last_scanned_at = CURRENT_TIMESTAMP`,
+        [studentId, plant.id],
+      );
 
-      logActivity(db, {
+      await logActivity(db, {
         actorType: 'student',
         actorId: studentId,
         action: 'plant_scanned',

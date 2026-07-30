@@ -11,7 +11,7 @@ const notMadeEntry = {
   recipe_id: 3,
   recipe_name: 'Carrot Soup',
   recipe_image_path: null,
-  is_made: 0,
+  is_made: false,
   rating: null,
 };
 
@@ -35,7 +35,7 @@ describe('CookbookEntryDetail rating gate', () => {
       vi.fn((url: string) => {
         if (url.includes('/made')) {
           return Promise.resolve(
-            new Response(JSON.stringify({ ...notMadeEntry, is_made: 1 }), { status: 200 }),
+            new Response(JSON.stringify({ ...notMadeEntry, is_made: true }), { status: 200 }),
           );
         }
         return Promise.resolve(new Response(JSON.stringify([notMadeEntry]), { status: 200 }));
