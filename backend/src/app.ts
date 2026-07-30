@@ -20,6 +20,7 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
  */
 export function createApp(db: Pool) {
   const app = express();
+  app.set('trust proxy', 1);
 
   // Ponytail: hand-rolled CORS instead of the `cors` package — the frontend
   // is a single known origin needing credentialed requests, not a public

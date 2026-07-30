@@ -23,6 +23,8 @@ const PgStore = connectPgSimple(session);
 
 /** Builds the shared PostgreSQL-backed session middleware. */
 export function createSessionMiddleware(db: Pool): RequestHandler {
+  const usesHttpsFrontend = process.env.FRONTEND_ORIGIN?.startsWith('https://') ?? false;
+
   return session({
     store: new PgStore({
       pool: db,
@@ -34,7 +36,8 @@ export function createSessionMiddleware(db: Pool): RequestHandler {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: usesHttpsFrontend ? 'none' : 'lax',
+      secure: usesHttpsFrontend,
       maxAge: 24 * 60 * 60 * 1000,
     },
   });

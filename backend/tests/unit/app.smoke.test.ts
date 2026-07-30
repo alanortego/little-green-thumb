@@ -31,4 +31,31 @@ describe('app smoke test', () => {
       .send({ email: 'nobody@example.com', password: 'x' });
     expect(res.status).toBe(401);
   });
+
+  it('uses a secure cross-site cookie for an HTTPS frontend', async () => {
+    const originalOrigin = process.env.FRONTEND_ORIGIN;
+    process.env.FRONTEND_ORIGIN = 'https://little-green-thumb.onrender.com';
+
+    try {
+      const httpsApp = createApp(db);
+      httpsApp.post('/test-session', (req, res) => {
+        req.session.role = 'child';
+        res.sendStatus(204);
+      });
+
+      const res = await request(httpsApp)
+        .post('/test-session')
+        .set('X-Forwarded-Proto', 'https');
+
+      expect(res.headers['set-cookie']).toEqual(
+        expect.arrayContaining([expect.stringContaining('Secure; SameSite=None')]),
+      );
+    } finally {
+      if (originalOrigin === undefined) {
+        delete process.env.FRONTEND_ORIGIN;
+      } else {
+        process.env.FRONTEND_ORIGIN = originalOrigin;
+      }
+    }
+  });
 });
