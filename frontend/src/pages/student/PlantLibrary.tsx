@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Heading } from '../../components/primitives';
 import { api } from '../../services/api';
 import { getCachedPlants } from '../../services/offlineCache';
+import { Layout } from '../../styles/styles';
 import { Grid, PlantCard, PlantImage } from './PlantLibrary.styles';
 
 interface LibraryPlant {
@@ -24,7 +25,7 @@ export function PlantLibrary() {
   }, []);
 
   return (
-    <div>
+    <Layout>
       <Heading kid>Plant Library 📖</Heading>
       <Grid>
         {plants.map((plant) => (
@@ -34,6 +35,6 @@ export function PlantLibrary() {
           </PlantCard>
         ))}
       </Grid>
-    </div>
+    </Layout>
   );
 }

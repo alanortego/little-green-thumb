@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import QrScanner from 'qr-scanner';
 import { Button, Heading } from '../../components/primitives';
+import { Layout } from '../../styles/styles';
 import { ExitButton, Video } from './ScanScreen.styles';
 
 /** T022: full-screen camera scanner (native BarcodeDetector where available). */
@@ -12,7 +13,7 @@ export function ScanScreen() {
 
   useEffect(() => {
     if (!videoRef.current) {
-      return; 
+      return;
     }
 
     const scanner = new QrScanner(
@@ -29,7 +30,7 @@ export function ScanScreen() {
   }, [navigate]);
 
   return (
-    <div>
+    <Layout>
       <ExitButton kid aria-label="Exit scanning" onClick={() => navigate('/student')}>
         ⬅️
       </ExitButton>
@@ -44,6 +45,6 @@ export function ScanScreen() {
       ) : (
         <Video ref={videoRef} />
       )}
-    </div>
+    </Layout>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Heading } from '../../components/primitives';
 import { api } from '../../services/api';
+import { Layout } from '../../styles/styles';
 import { Grid, RecipeCard, RecipeImage } from './RecipeList.styles';
 
 interface RecipeSummary {
@@ -18,7 +19,7 @@ export function RecipeList() {
 
   useEffect(() => {
     if (!plantId) {
-      return; 
+      return;
     }
     api<RecipeSummary[]>(`/plants/${plantId}/recipes`)
       .then(setRecipes)
@@ -26,7 +27,7 @@ export function RecipeList() {
   }, [plantId]);
 
   return (
-    <div>
+    <Layout>
       <Heading kid>Recipes 🍽️</Heading>
       {recipes.length === 0 && <p>No recipes for this plant yet — check back soon!</p>}
       <Grid>
@@ -37,6 +38,6 @@ export function RecipeList() {
           </RecipeCard>
         ))}
       </Grid>
-    </div>
+    </Layout>
   );
 }

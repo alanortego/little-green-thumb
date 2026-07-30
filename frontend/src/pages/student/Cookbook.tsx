@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Button, Heading } from '../../components/primitives';
 import { api } from '../../services/api';
 import { getCurrentStudent } from '../../services/currentStudent';
-import { Controls, EntryCard, Grid, RemoveButton } from './Cookbook.styles';
+import { Layout } from '../../styles/styles';
+import { Controls, EntryCard, EntryName, EntryStatus, Grid, RemoveButton } from './Cookbook.styles';
 
 interface CookbookEntry {
   id: number;
@@ -24,16 +26,18 @@ export function Cookbook({ basePath = '/student' }: { basePath?: string }) {
   const [entries, setEntries] = useState<CookbookEntry[]>([]);
   const [sort, setSort] = useState<SortKey>('newest');
   const [filterMade, setFilterMade] = useState<'all' | 'made' | 'not-made'>('all');
+  const [entryToRemove, setEntryToRemove] = useState<CookbookEntry | null>(null);
+  const [removalError, setRemovalError] = useState<string | null>(null);
 
   useEffect(() => {
     const student = getCurrentStudent();
     if (!student) {
-      return; 
+      return;
     }
 
     const params = new URLSearchParams({ sort });
     if (filterMade !== 'all') {
-      params.set('filterMade', String(filterMade === 'made')); 
+      params.set('filterMade', String(filterMade === 'made'));
     }
 
     api<CookbookEntry[]>(`/students/${student.id}/cookbook?${params}`)
@@ -42,15 +46,23 @@ export function Cookbook({ basePath = '/student' }: { basePath?: string }) {
   }, [sort, filterMade]);
 
   async function remove(entryId: number) {
-    await api(`/cookbook/${entryId}`, { method: 'DELETE' }).catch(() => undefined);
-    setEntries((prev) => prev.filter((e) => e.id !== entryId));
+    try {
+      await api(`/cookbook/${entryId}`, { method: 'DELETE' });
+      setEntries((prev) => prev.filter((entry) => entry.id !== entryId));
+      setEntryToRemove(null);
+    } catch {
+      setRemovalError('Could not remove that recipe. Please try again.');
+    }
   }
 
   return (
-    <div>
+    <Layout>
       <Heading kid>My Cookbook 📚</Heading>
       <Controls>
-        <Button variant={sort === 'newest' ? 'primary' : 'secondary'} onClick={() => setSort('newest')}>
+        <Button
+          variant={sort === 'newest' ? 'primary' : 'secondary'}
+          onClick={() => setSort('newest')}
+        >
           Newest
         </Button>
         <Button
@@ -59,7 +71,10 @@ export function Cookbook({ basePath = '/student' }: { basePath?: string }) {
         >
           A-Z
         </Button>
-        <Button variant={sort === 'rating' ? 'primary' : 'secondary'} onClick={() => setSort('rating')}>
+        <Button
+          variant={sort === 'rating' ? 'primary' : 'secondary'}
+          onClick={() => setSort('rating')}
+        >
           Top Rated
         </Button>
         <Button
@@ -69,26 +84,47 @@ export function Cookbook({ basePath = '/student' }: { basePath?: string }) {
           I Made It ✅
         </Button>
       </Controls>
+      {removalError && <p role="alert">{removalError}</p>}
       {entries.length === 0 && <p>No recipes in your Cookbook yet — go scan a plant!</p>}
       <Grid>
         {entries.map((entry) => (
           <EntryCard key={entry.id} onClick={() => navigate(`${basePath}/cookbook/${entry.id}`)}>
             <RemoveButton
-              kid
-              aria-label={`Remove ${entry.recipe_name}`}
+              data-remove-button
+              type="button"
+              variant="danger"
               onClick={(e) => {
                 e.stopPropagation();
-                remove(entry.id);
+                setRemovalError(null);
+                setEntryToRemove(entry);
               }}
             >
-              ✕
+              Remove
             </RemoveButton>
-            {entry.recipe_image_path && <img alt={entry.recipe_name} src={entry.recipe_image_path} />}
-            <span>{entry.recipe_name}</span>
-            {entry.is_made ? <span>Made it! {'⭐'.repeat(entry.rating ?? 0)}</span> : <span>Not made yet</span>}
+            {entry.recipe_image_path && (
+              <img alt={entry.recipe_name} src={entry.recipe_image_path} />
+            )}
+            <EntryName>{entry.recipe_name}</EntryName>
+            {entry.is_made ? (
+              <EntryStatus>Made it! {'⭐'.repeat(entry.rating ?? 0)}</EntryStatus>
+            ) : (
+              <EntryStatus>Not made yet</EntryStatus>
+            )}
           </EntryCard>
         ))}
       </Grid>
-    </div>
+      <ConfirmDialog
+        confirmLabel="Remove"
+        description={`Remove ${entryToRemove?.recipe_name ?? 'this recipe'} from your Cookbook?`}
+        onCancel={() => setEntryToRemove(null)}
+        onConfirm={() => {
+          if (entryToRemove) {
+            void remove(entryToRemove.id);
+          }
+        }}
+        open={entryToRemove !== null}
+        title="Remove recipe?"
+      />
+    </Layout>
   );
 }

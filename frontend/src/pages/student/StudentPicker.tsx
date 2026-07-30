@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Heading } from '../../components/primitives';
 import { api } from '../../services/api';
 import { setCurrentStudent } from '../../services/currentStudent';
+import { Layout } from '../../styles/styles';
 import { AvatarButton, Grid } from './StudentPicker.styles';
 
 interface PickerStudent {
@@ -40,16 +41,16 @@ export function StudentPicker() {
   }
 
   return (
-    <div>
+    <Layout>
       <Heading kid>Who&apos;s cooking today? 🌱</Heading>
       <Grid>
         {students.map((student) => (
-          <AvatarButton key={student.id} kid onClick={() => pick(student)}>
+          <AvatarButton key={student.id} onClick={() => pick(student)}>
             <span>{AVATAR_EMOJI[student.avatar_key] ?? '🌟'}</span>
             <span>{student.display_name}</span>
           </AvatarButton>
         ))}
       </Grid>
-    </div>
+    </Layout>
   );
 }

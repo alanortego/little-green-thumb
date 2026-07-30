@@ -1,5 +1,5 @@
 import styled from '@emotion/styled';
-import { Button } from '../../components/primitives';
+import { Card } from '../../components/primitives';
 
 export const Grid = styled.div`
   display: flex;
@@ -9,9 +9,24 @@ export const Grid = styled.div`
   padding: ${({ theme }) => theme.space.xl};
 `;
 
-export const AvatarButton = styled(Button)`
+export const AvatarButton = styled(Card)`
+  cursor: pointer;
+  min-height: ${({ theme }) => theme.tapTarget.childMin};
+  display: flex;
   flex-direction: column;
-  height: 140px;
-  width: 140px;
-  font-size: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: ${({ theme }) => theme.space.sm};
+  font-size: ${({ theme }) => theme.font.size.childBody};
+  text-align: center;
+
+  font-family: ${({ theme }) => theme.font.family};
+  font-size: ${({ theme }) => theme.font.size.childBody};
+  font-weight: 700;
+  background: ${({ theme }) => theme.color.primary};
+  color: #fff;
+
+  &:active {
+    transform: scale(0.97);
+  }
 `;
